@@ -1,7 +1,8 @@
 
 import logging
 import os
-from aiogram.client.default import DefaultBotPropertiesfrom aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
