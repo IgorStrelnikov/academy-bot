@@ -1,86 +1,73 @@
-
 import logging
 import os
-from aiogram.client.default import DefaultBotProperties
-from aiogram import Bot, Dispatcher, types
+
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
+from aiogram.utils.markdown import hbold
 from aiogram.filters import CommandStart
-from aiogram.types import ReplyKeyboardRemove
-from datetime import datetime
-import asyncio
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Переменные окружения
+# Инициализация логирования
+logging.basicConfig(level=logging.INFO)
+
+# Получаем переменные из окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Прямой ID канала
+GOOGLE_SHEET_NAME = os.getenv("SPREADSHEET_NAME", "AcademyBotLeads")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Пример: -1001234567890
 
-# Авторизация Google Sheets
+# Telegram bot
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+
+# Подключение к Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("google_credentials.json", scope)
-client = gspread.authorize(creds)
-sheet = client.open(SPREADSHEET_NAME).sheet1
+credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+gc = gspread.authorize(credentials)
+sheet = gc.open(GOOGLE_SHEET_NAME).sheet1
 
-# Настройка бота
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=MemoryStorage())
+# Приветственное сообщение
+WELCOME_TEXT = (
+    "👋 Добро пожаловать в закрытый канал Академии «Бенефактор» Игоря Стрельникова и Максима Кучерова!\n\n"
+    "Здесь вы сможете:\n"
+    "• Изучить вводные бесплатные уроки\n"
+    "• Получать свежие новости и обновления Академии\n"
+    "• Пройти индивидуальные сессии с экспертами Академии (в стадии технической настройки)\n"
+    "• Задать вопросы по обучению в специальной группе\n"
+    "• Участвовать в видеовстречах и общаться с другими участниками\n"
+    "• Спокойно понять, подходит ли вам наше обучение\n\n"
+    "✍️ Пожалуйста, напишите в ответ несколько слов:\n"
+    "какую пользу вы хотели бы получить и какие боли или задачи стремитесь решить с нашей помощью."
+)
 
-# Состояние анкеты
-class Form(StatesGroup):
-    waiting_for_response = State()
+@dp.message(CommandStart())
+async def handle_start(message: Message):
+    await message.answer(WELCOME_TEXT)
 
-# Стартовая точка с отслеживанием источника
-@dp.message(CommandStart(deep_link=True))
-async def start(message: types.Message, state: FSMContext, command: CommandStart):
-    source = command.args or "не указан"
-    await state.update_data(source=source)
-    await message.answer(
-        "👋 Академия <b>«Бенефактор»</b> приветствует вас!\n\n"
-        "Здесь вы сможете:\n"
-        "• Изучить вводные бесплатные уроки\n"
-        "• Получать свежие новости и обновления Академии\n"
-        "• Пройти индивидуальные сессии с экспертами (в стадии настройки)\n"
-        "• Задать вопросы по обучению в специальной группе\n"
-        "• Участвовать в видеовстречах с другими участниками\n"
-        "• И спокойно понять, подходит ли вам наше обучение\n\n"
-        "✍️ Пожалуйста, напишите, какую пользу вы хотите получить и какие боли или задачи стремитесь решить с нашей помощью."
-    )
-    await state.set_state(Form.waiting_for_response)
-
-# Обработка ответа и добавление в канал
-@dp.message(Form.waiting_for_response)
-async def handle_response(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    source = data.get("source", "не указан")
+@dp.message(F.text)
+async def handle_response(message: Message):
     user = message.from_user
-    response = message.text
-
-    # Лог в Google Таблицу
-    sheet.append_row([
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    user_data = [
         user.full_name,
-        f"@{user.username}" if user.username else "—",
-        source,
-        response
-    ])
+        user.username or "",
+        str(user.id),
+        message.text
+    ]
+    sheet.append_row(user_data)
+    await message.answer("✅ Спасибо! Мы добавляем вас в канал...")
 
-    # Добавление в канал
-    try:
-        await bot.add_chat_member(chat_id=CHANNEL_ID, user_id=user.id)
-        await message.answer("✅ Спасибо! Мы добавили вас в канал 🎉", reply_markup=ReplyKeyboardRemove())
-    except Exception as e:
-        logging.error(f"Ошибка при добавлении в канал: {e}")
-        await message.answer("⚠️ Не удалось добавить вас в канал. Пожалуйста, свяжитесь с администратором.")
+    if CHANNEL_ID:
+        try:
+            await bot.send_message(CHANNEL_ID, f"➕ Новый участник: {hbold(user.full_name)} (@{user.username or 'без username'})")
+            await bot.send_message(message.chat.id, "🎉 Готово! Проверьте, пожалуйста, доступ к закрытому каналу.")
+        except Exception as e:
+            logging.error(f"Ошибка при добавлении в канал: {e}")
+            await message.answer("Произошла ошибка при добавлении в канал.")
+    else:
+        await message.answer("⚠️ Канал пока не подключён. Свяжитесь с администрацией.")
 
-    await state.clear()
-
-# Запуск
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(dp.start_polling(bot))
