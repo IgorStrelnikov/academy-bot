@@ -8,7 +8,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardRemove
-from aiogram.utils.markdown import quote_html
 from datetime import datetime
 import asyncio
 import gspread
