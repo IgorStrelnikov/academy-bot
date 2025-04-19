@@ -1,73 +1,39 @@
 import logging
 import os
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.types import Message
-from aiogram.utils.markdown import hbold
-from aiogram.filters import CommandStart
+from aiogram.webhook.aiohttp_server import setup_application
+from aiohttp import web
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_PATH = "/webhook"
+BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "https://your-service-name.onrender.com")
+WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
 
-# Инициализация логирования
 logging.basicConfig(level=logging.INFO)
 
-# Получаем переменные из окружения
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GOOGLE_SHEET_NAME = os.getenv("SPREADSHEET_NAME", "AcademyBotLeads")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Пример: -1001234567890
-
-# Telegram bot
 bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
-# Подключение к Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-gc = gspread.authorize(credentials)
-sheet = gc.open(GOOGLE_SHEET_NAME).sheet1
+@dp.message()
+async def echo(message: types.Message):
+    await message.answer(f"Привет, {message.from_user.full_name}!")
 
-# Приветственное сообщение
-WELCOME_TEXT = (
-    "👋 Добро пожаловать в закрытый канал Академии «Бенефактор» Игоря Стрельникова и Максима Кучерова!\n\n"
-    "Здесь вы сможете:\n"
-    "• Изучить вводные бесплатные уроки\n"
-    "• Получать свежие новости и обновления Академии\n"
-    "• Пройти индивидуальные сессии с экспертами Академии (в стадии технической настройки)\n"
-    "• Задать вопросы по обучению в специальной группе\n"
-    "• Участвовать в видеовстречах и общаться с другими участниками\n"
-    "• Спокойно понять, подходит ли вам наше обучение\n\n"
-    "✍️ Пожалуйста, напишите в ответ несколько слов:\n"
-    "какую пользу вы хотели бы получить и какие боли или задачи стремитесь решить с нашей помощью."
-)
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL)
+    print(f"Webhook установлен: {WEBHOOK_URL}")
 
-@dp.message(CommandStart())
-async def handle_start(message: Message):
-    await message.answer(WELCOME_TEXT)
+async def on_shutdown(app):
+    await bot.delete_webhook()
 
-@dp.message(F.text)
-async def handle_response(message: Message):
-    user = message.from_user
-    user_data = [
-        user.full_name,
-        user.username or "",
-        str(user.id),
-        message.text
-    ]
-    sheet.append_row(user_data)
-    await message.answer("✅ Спасибо! Мы добавляем вас в канал...")
-
-    if CHANNEL_ID:
-        try:
-            await bot.send_message(CHANNEL_ID, f"➕ Новый участник: {hbold(user.full_name)} (@{user.username or 'без username'})")
-            await bot.send_message(message.chat.id, "🎉 Готово! Проверьте, пожалуйста, доступ к закрытому каналу.")
-        except Exception as e:
-            logging.error(f"Ошибка при добавлении в канал: {e}")
-            await message.answer("Произошла ошибка при добавлении в канал.")
-    else:
-        await message.answer("⚠️ Канал пока не подключён. Свяжитесь с администрацией.")
+async def create_app():
+    app = web.Application()
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+    app.router.add_post(WEBHOOK_PATH, dp.webhook_handler(bot))
+    setup_application(app, dp, bot=bot)
+    return app
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(dp.start_polling(bot))
+    web.run_app(create_app(), host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
